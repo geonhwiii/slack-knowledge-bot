@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start",
     "migrate": "bun scripts/migrate.ts",
+    "check-db": "bun scripts/check-db.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
