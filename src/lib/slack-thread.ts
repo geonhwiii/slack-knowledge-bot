@@ -31,6 +31,19 @@ export function buildSlackPermalink(threadKey: string): string | undefined {
   return `${base}/archives/${parsed.channelId}/p${parsed.ts.replace(".", "")}`;
 }
 
+/**
+ * 슬랙이 보내는 멘션은 서식을 벗겨도 `@U0BPXE20EA2` 같은 사용자 ID로 남는다.
+ * 그대로 두면 봇을 부르는 말이 프롬프트에 잡음으로 섞이고, 저장된 지식의 검색
+ * 텍스트에도 의미 없는 ID가 들어간다. 누가 말했는지는 authorName이 이미 담고 있으므로
+ * 여기서는 지운다.
+ */
+export function stripMentionIds(text: string): string {
+  return text
+    .replace(/<?@[UW][A-Z0-9]{2,}>?/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 export interface ToSourceThreadOptions {
   /**
    * 채널 이름까지 가져올지. 슬랙 API 호출이 한 번 더 들기 때문에, 저장처럼
@@ -50,7 +63,7 @@ export async function toSourceThread(
     // 봇 자신의 발언과 플랫폼이 만든 알림은 지식이 아니다.
     if (message.author.isMe || message.author.isSystem) continue;
 
-    const text = message.text.trim();
+    const text = stripMentionIds(message.text);
     if (!text) continue;
 
     messages.push({

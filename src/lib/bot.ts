@@ -2,6 +2,7 @@ import { createSlackAdapter } from "@chat-adapter/slack";
 import { createPostgresState } from "@chat-adapter/state-pg";
 import { Chat, type Message, type Thread } from "chat";
 import { createKnowledgeAgent } from "@/lib/agent";
+import { stripMentionIds } from "@/lib/slack-thread";
 
 /**
  * 봇은 첫 요청 때 만든다.
@@ -41,7 +42,8 @@ async function respond(thread: Thread, message: Message) {
     await thread.startTyping("스레드를 읽는 중...");
 
     const agent = createKnowledgeAgent({ thread, requestedBy });
-    const result = await agent.stream({ prompt: message.text });
+    // 봇을 부르는 멘션 자체는 요청 내용이 아니다. 빼고 넘긴다.
+    const result = await agent.stream({ prompt: stripMentionIds(message.text) });
 
     // fullStream을 그대로 넘기면 슬랙 네이티브 스트리밍으로 렌더링된다.
     await thread.post(result.fullStream);
