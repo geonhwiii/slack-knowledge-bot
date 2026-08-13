@@ -3,6 +3,7 @@ import type { Thread } from "chat";
 import { z } from "zod";
 import { findRelatedKnowledge } from "@/domain/knowledge/related";
 import { forgetThread, saveThreadAsKnowledge } from "@/domain/knowledge/save";
+import { renderTranscript } from "@/domain/knowledge/transcript";
 import type { KnowledgeEntry } from "@/domain/knowledge/types";
 import { reasoningModel } from "@/lib/models";
 import { toSourceThread } from "@/lib/slack-thread";
@@ -32,6 +33,23 @@ const INSTRUCTIONS = `너는 슬랙 스레드의 지식을 관리하는 봇이�
 저장했을 때는 이 기록이 워크스페이스 전원의 검색 대상이 된다는 점을 함께 알린다.
 저장을 지시한 사람이 공개를 선택한 것이므로, 그 사실을 모르고 지나가지 않게 한다.
 
+요약을 요청받으면 read_thread로 원문을 읽고 직접 요약한다. 무엇이 논의됐고, 무엇이 정해졌고,
+아직 열려 있는 것이 무엇인지를 담는다. 참여자별 발언 중계가 아니라, 이 스레드를 안 읽은
+사람이 지금 상황을 파악할 수 있는 글이어야 한다.
+
+기술검토를 요청받으면 먼저 find_related_knowledge로 사내 선례를 찾고, read_thread로 원문을 읽은 뒤
+아래 네 부분으로 답한다.
+
+  제안 요약 — 무엇을 하자는 것인지 한두 문장으로.
+  사내 선례 — 지식베이스에서 찾은 관련 결정이나 사례. 없으면 "관련 선례 없음"이라고 적는다.
+  확인이 필요한 질문 — 이 결정에서 아직 확인되지 않은 것들.
+  언급되지 않은 위험 — 스레드에서 아무도 꺼내지 않은 위험.
+
+기술검토에서 좋다/나쁘다를 판정하지 않는다. 너는 이 회사의 코드베이스도 인프라도 트래픽 규모도
+보지 못하므로, 그 판정에는 근거가 없다. 대신 좋은 질문을 던진다 — 놓친 것을 짚는 일은 맥락 없이도
+가능하고, 판단은 사람이 한다. "확장성을 고려하세요" 같은 일반론은 쓰지 않는다. 그건 누구나
+챗봇에게 물어볼 수 있는 답이고, 이 봇이 낄 자리가 아니다.
+
 도구가 실패하면 실패했다고 말한다. 성공한 척하지 않는다.`;
 
 function describeEntry(entry: KnowledgeEntry) {
@@ -60,6 +78,20 @@ export function createKnowledgeAgent({ thread, requestedBy }: AgentContext) {
     instructions: INSTRUCTIONS,
     providerOptions: { anthropic: { effort: "high" } },
     tools: {
+      read_thread: tool({
+        description:
+          "지금 스레드의 대화 원문을 읽는다. 요약이나 기술검토처럼 스레드 내용 자체가 " +
+          "필요한 요청에서 먼저 부른다.",
+        inputSchema: z.object({}),
+        execute: async () => {
+          const source = await toSourceThread(thread);
+          return {
+            messageCount: source.messages.length,
+            transcript: renderTranscript(source),
+          };
+        },
+      }),
+
       find_related_knowledge: tool({
         description:
           "지금 스레드의 논의와 같은 상황을 다룬 과거 기록이 지식베이스에 있는지 찾는다. " +

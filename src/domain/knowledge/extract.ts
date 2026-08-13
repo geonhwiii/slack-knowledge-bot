@@ -1,6 +1,7 @@
 import { generateObject, type LanguageModel } from "ai";
 import { z } from "zod";
 import { reasoningModel } from "@/lib/models";
+import { renderTranscript } from "./transcript";
 import type { EntryDraft, SourceThread } from "./types";
 
 /**
@@ -57,13 +58,6 @@ status를 unresolved로 둔다. 미해결 기록도 그대로 가치가 있다 �
 다듬으면 나중에 그 코드로 검색했을 때 걸리지 않는다.
 
 한국어로 쓴다.`;
-
-/** LLM에게 넘길 형태로 스레드를 펼친다. */
-function renderTranscript(thread: SourceThread): string {
-  return thread.messages
-    .map((message) => `[${message.postedAt.toISOString()}] ${message.authorName}: ${message.text}`)
-    .join("\n");
-}
 
 export interface ExtractOptions {
   /** 테스트에서 갈아끼우기 위한 자리. 평소에는 기본 모델을 쓴다. */
