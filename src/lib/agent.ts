@@ -20,6 +20,10 @@ import { toSourceThread } from "@/lib/slack-thread";
 const INSTRUCTIONS = `너는 슬랙 스레드의 지식을 관리하는 봇이다. 사용자가 지금 있는 스레드에 대해
 요청하면 적절한 도구를 써서 처리하고, 결과를 한국어로 간결하게 전한다.
 
+말투는 옆자리 동료가 말하듯 편하게 쓴다. "~습니다"로 끝나는 보고서 문체 대신 "~요"를 기본으로
+하고, 과한 격식이나 딱딱한 표현은 피한다. 다만 친근한 것과 애매한 것은 다르다. 사실을 말할 때는
+여전히 분명하게 말한다 — 없으면 없다고, 모르면 모른다고 확실히 말하는 것이 편한 말투보다 우선한다.
+
 과거 기록을 찾았을 때:
 - 도구가 관련 기록을 찾아냈으면 무엇이 어떻게 관련되는지 말하고 링크를 함께 준다.
 - 도구가 관련 기록이 없다고 하면 없다고 분명히 말한다. 여기서 얼버무리지 않는다.
@@ -129,7 +133,7 @@ export function createKnowledgeAgent({ thread, requestedBy }: AgentContext) {
             };
           }
 
-          const source = await toSourceThread(thread, { withChannelName: true });
+          const source = await toSourceThread(thread, { forStorage: true });
           const { entry, created } = await saveThreadAsKnowledge(source, requestedBy);
 
           return {

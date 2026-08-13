@@ -16,19 +16,36 @@ function parseThreadKey(threadKey: string): { channelId: string; ts: string } | 
 }
 
 /**
- * 슬랙 원문으로 돌아가는 링크. 봇이 "3월에 비슷한 게 있었습니다"라고 말할 때
- * 근거를 함께 주기 위한 것이라, 이게 없으면 답변의 신뢰가 떨어진다.
+ * 슬랙 원문으로 돌아가는 링크.
  *
- * 워크스페이스 도메인은 SDK가 알려주지 않으므로 환경변수로 받는다.
+ * 봇이 "3월에 비슷한 게 있었습니다"라고 말할 때 함께 주는 근거다. 이게 없으면
+ * 사람은 봇의 말을 검증할 방법이 없고, 검증할 수 없는 주장은 결국 안 믿게 된다.
+ *
+ * 슬랙에게 직접 물어본다. 워크스페이스 주소를 환경변수로 받아 조립하면 설정 하나가
+ * 빠졌을 때 링크가 조용히 사라지는데, 그 사실을 아무도 모른 채 지식만 쌓인다.
  */
-export function buildSlackPermalink(threadKey: string): string | undefined {
-  const base = process.env.SLACK_WORKSPACE_URL?.replace(/\/+$/, "");
-  if (!base) return undefined;
-
+export async function resolvePermalink(threadKey: string): Promise<string | undefined> {
   const parsed = parseThreadKey(threadKey);
   if (!parsed) return undefined;
 
-  return `${base}/archives/${parsed.channelId}/p${parsed.ts.replace(".", "")}`;
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (token) {
+    try {
+      const response = await fetch(
+        `https://slack.com/api/chat.getPermalink?channel=${parsed.channelId}&message_ts=${parsed.ts}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const body = (await response.json()) as { ok: boolean; permalink?: string; error?: string };
+      if (body.ok && body.permalink) return body.permalink;
+      console.warn("[permalink] slack이 링크를 주지 않음", { threadKey, error: body.error });
+    } catch (error) {
+      console.warn("[permalink] slack 호출 실패", { threadKey, error });
+    }
+  }
+
+  // API가 실패했을 때의 차선. 주소를 알고 있다면 형식은 정해져 있다.
+  const base = process.env.SLACK_WORKSPACE_URL?.replace(/\/+$/, "");
+  return base ? `${base}/archives/${parsed.channelId}/p${parsed.ts.replace(".", "")}` : undefined;
 }
 
 /**
@@ -46,10 +63,10 @@ export function stripMentionIds(text: string): string {
 
 export interface ToSourceThreadOptions {
   /**
-   * 채널 이름까지 가져올지. 슬랙 API 호출이 한 번 더 들기 때문에, 저장처럼
-   * 오래 남을 기록을 만들 때만 켠다.
+   * 오래 남을 기록을 만드는 중인지. 켜면 채널 이름과 permalink까지 가져온다.
+   * 슬랙 API를 두 번 더 부르므로, 읽기만 하는 요청에서는 켜지 않는다.
    */
-  withChannelName?: boolean;
+  forStorage?: boolean;
 }
 
 export async function toSourceThread(
@@ -74,20 +91,23 @@ export async function toSourceThread(
   }
 
   let channelName: string | undefined;
-  if (options.withChannelName) {
+  let permalink: string | undefined;
+
+  if (options.forStorage) {
     try {
       await thread.channel.fetchMetadata();
       channelName = thread.channel.name ?? undefined;
     } catch {
       // 이름은 있으면 좋은 정보일 뿐이다. 못 가져왔다고 저장을 막지 않는다.
     }
+    permalink = await resolvePermalink(thread.id);
   }
 
   return {
     key: thread.id,
     channelId: thread.channelId,
     channelName,
-    permalink: buildSlackPermalink(thread.id),
+    permalink,
     messages,
   };
 }
