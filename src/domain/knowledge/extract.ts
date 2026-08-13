@@ -1,6 +1,6 @@
 import { generateObject, type LanguageModel } from "ai";
 import { z } from "zod";
-import { reasoningModel } from "@/lib/models";
+import { logUsage, reasoningModel } from "@/lib/models";
 import { renderTranscript } from "./transcript";
 import type { EntryDraft, SourceThread } from "./types";
 
@@ -76,7 +76,7 @@ export async function extractDraft(
     throw new Error(`빈 스레드에서는 지식을 뽑을 수 없습니다: ${thread.key}`);
   }
 
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model: options.model ?? reasoningModel,
     schema: draftSchema,
     schemaName: "knowledge_entry",
@@ -91,6 +91,8 @@ export async function extractDraft(
       anthropic: { effort: "high" },
     },
   });
+
+  logUsage("추출", usage);
 
   return object;
 }

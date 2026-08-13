@@ -1,6 +1,6 @@
 import { generateObject, type LanguageModel } from "ai";
 import { z } from "zod";
-import { reasoningModel } from "@/lib/models";
+import { logUsage, reasoningModel } from "@/lib/models";
 import { embedText } from "./embed";
 import { extractDraft } from "./extract";
 import { findCandidates, type Candidate } from "./search";
@@ -120,7 +120,7 @@ export async function findRelatedKnowledge(
     return { situation: draft.situation, draft, related: [], adjacent: [] };
   }
 
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model: options.model ?? reasoningModel,
     schema: judgementSchema,
     schemaName: "relevance_judgement",
@@ -129,6 +129,8 @@ export async function findRelatedKnowledge(
     maxOutputTokens: 4000,
     providerOptions: { anthropic: { effort: "high" } },
   });
+
+  logUsage("판정", usage);
 
   // 번호는 모델이 만들어낸 값이라 범위를 벗어날 수 있다. 조용히 버린다.
   const seen = new Set<number>();
