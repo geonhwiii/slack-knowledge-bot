@@ -1,104 +1,76 @@
 # slack-knowledge-bot
 
-슬랙 스레드에서 오간 논의를 검색 가능한 지식으로 쌓고, 쌓인 지식을 근거로 답하는 봇.
+슬랙 스레드에서 오간 논의를 검색 가능한 지식으로 쌓고, 쌓인 지식으로 답하는 봇.
 
 ```
-@봇 이 스레드 요약해줘          → 스레드를 읽고 요약
-@봇 이 이슈 전에도 있었어?      → 지식베이스에서 같은 상황을 찾아 원문 링크와 함께 답변
-@봇 이 스레드 지식 저장해줘     → 스레드를 구조화된 기록으로 저장
-@봇 이거 기술검토해줘           → 사내 선례를 근거로 확인이 필요한 지점을 제시
-@봇 이 기록 삭제해줘            → 지식베이스에서 제거
+@봇 이 스레드 요약해줘
+@봇 이 이슈 전에도 있었어?      지식베이스를 뒤져 원문 링크와 함께 답한다
+@봇 이 스레드 지식 저장해줘
+@봇 이거 기술검토해줘           사내 선례를 근거로 확인할 지점을 짚는다
+@봇 이 기록 삭제해줘
 ```
 
-채널에서는 **부를 때만** 답합니다. 스레드를 구독해두면 이후 모든 메시지마다 봇이 끼어들고 비용도 메시지 수에 비례해 늘어나는데, 장애 대응 중에는 그게 방해입니다. DM에서는 멘션 없이 그냥 말하면 됩니다.
+채널에서는 부를 때만 답한다. DM에서는 멘션 없이 그냥 말하면 된다.
 
-설계 배경과 용어 정의는 [CONTEXT.md](CONTEXT.md)에 있습니다.
+설계 결정과 용어 정의는 [CONTEXT.md](CONTEXT.md)에 있다.
 
----
+## 동작
 
-## 어떻게 동작하나
+슬랙이 웹훅을 보내면 `/api/webhooks/slack`이 즉시 200을 돌려주고, 실제 처리는 백그라운드에서 이어진다(슬랙은 3초 안에 응답을 요구한다). 에이전트가 요청을 읽고 도구를 고른다: `read_thread`, `find_related_knowledge`, `save_knowledge`, `delete_knowledge`.
 
-```
-슬랙에서 @봇 멘션
-      │
-      ▼  슬랙이 우리 서버로 웹훅 전송 (3초 안에 응답해야 함)
-/api/webhooks/slack  ──► 즉시 200 응답, 실제 처리는 백그라운드로
-      │
-      ▼
-에이전트(claude-opus-5)가 도구를 고른다
-      │
-      ├─ read_thread            스레드 원문 읽기
-      ├─ find_related_knowledge 과거 기록 검색
-      ├─ save_knowledge         지식으로 저장
-      └─ delete_knowledge       기록 삭제
-      │
-      ▼
-답변을 스트리밍으로 슬랙에 출력
-```
+검색은 벡터와 키워드를 함께 돌린다. 벡터는 "결제 안 됨"과 "구매 실패"를 같은 말로 보지만 `ERR_PAYMENT_5031` 같은 코드에 약하고, 트라이그램 키워드 검색은 반대다. 두 결과를 RRF로 합쳐 후보 5개를 추린 다음, LLM이 후보를 읽고 관련 여부를 판정한다.
 
-**검색은 두 갈래를 함께 돌립니다.** 벡터 검색은 "결제 안 됨"과 "구매 실패"가 같은 말인 걸 잡지만 `ERR_PAYMENT_5031` 같은 코드에는 약하고, 트라이그램 키워드 검색은 그 반대입니다. 두 결과를 RRF로 합쳐 후보를 추린 뒤, **LLM이 후보를 실제로 읽고 관련 여부를 판정**합니다.
+판정 단계를 따로 둔 이유는 벡터 검색이 언제나 무언가를 돌려주기 때문이다. 결제 기록만 있는 지식베이스에 "회원가입 메일이 안 온다"를 물어도 제일 덜 무관한 결제 스레드가 1등으로 나온다. 그대로 답하면 봇이 무관한 링크를 자신 있게 내민다. 후보를 뽑는 일과 관련 있다고 말하는 일은 다른 일이다.
 
-이 판정 단계가 핵심입니다. 벡터 검색은 구조상 언제나 무언가를 돌려주기 때문에, 그대로 답하면 봇이 무관한 스레드를 자신 있게 링크합니다. 그래서 후보를 뽑는 일과 "관련 있다"고 말하는 일을 분리했고, 판정 프롬프트는 **관련된 게 없으면 없다고 답하도록** 명시합니다.
+## 준비물
 
----
+Bun, 그리고 계정 네 개. 모두 무료로 시작할 수 있다.
 
-## 사전 준비
-
-계정 네 개가 필요합니다. 전부 무료로 시작할 수 있습니다.
-
-| 서비스 | 용도 | 비용 |
-|---|---|---|
-| [Neon](https://neon.com) | Postgres (지식베이스 + 봇 상태) | 무료 티어 |
-| [Anthropic](https://console.anthropic.com) | 추출·판정·응답 | 종량제 |
-| [OpenAI](https://platform.openai.com) | 임베딩 | 종량제 |
-| [Slack](https://api.slack.com/apps) | 봇 앱 | 무료 |
-
-로컬에는 [Bun](https://bun.sh)이 필요합니다.
-
----
+- [Neon](https://neon.com) — Postgres
+- [Anthropic](https://console.anthropic.com) — 추출·판정·응답
+- [OpenAI](https://platform.openai.com) — 임베딩
+- [Slack](https://api.slack.com/apps) — 봇 앱
 
 ## 세팅
 
 ### 1. 설치
 
 ```bash
-git clone <이 저장소>
+git clone <저장소>
 cd slack-knowledge-bot
 bun install
 ```
 
-### 2. Postgres 준비 (Neon)
+### 2. Postgres
 
-[neon.com](https://neon.com)에서 프로젝트를 만듭니다. 리전은 사용자와 가까운 곳(한국이면 Singapore 또는 Tokyo)을 고르십시오.
+Neon에서 프로젝트를 만들고 Pooled connection 문자열(호스트에 `-pooler`가 붙은 쪽)을 복사한다. 서버리스는 요청마다 연결이 생겼다 사라지므로 풀러를 거치는 편이 낫다.
 
-대시보드에서 **Pooled connection** 문자열을 복사합니다(호스트에 `-pooler`가 붙어 있습니다). 서버리스 환경은 요청마다 연결이 생겼다 사라지므로 풀러를 거치는 편이 맞습니다.
+Neon이 아니어도 된다. `pgvector`와 `pg_trgm`을 켤 수 있는 Postgres면 무엇이든 동작한다. 로컬이면 `pgvector/pgvector:pg17` 도커 이미지에 둘 다 들어 있다.
 
-> Neon이 아니어도 됩니다. `pgvector`와 `pg_trgm` 확장을 켤 수 있는 Postgres면 무엇이든 동작합니다 (Supabase, RDS, 로컬 Docker의 `pgvector/pgvector:pg17` 이미지 등).
-
-### 3. 환경변수 파일 만들기
+### 3. 환경변수
 
 ```bash
 cp .env.example .env.local
 ```
 
-지금은 세 개만 채웁니다. 슬랙 값은 5단계에서 받습니다.
+지금은 세 개만 채운다. 슬랙 값은 5단계에서 받는다.
 
-```bash
+```
 POSTGRES_URL=postgresql://...?sslmode=verify-full
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 ```
 
-> `sslmode=require`로 두면 `pg` 드라이버가 경고를 냅니다. 다음 메이저 버전부터 이 값의 의미가 약해지기 때문에, 지금 `verify-full`로 명시해두는 편이 안전합니다.
+`sslmode=require`로 두면 `pg` 드라이버가 경고를 낸다. 다음 메이저 버전에서 이 값의 의미가 약해지므로 `verify-full`로 명시해두는 게 좋다.
 
-### 4. 스키마 만들기
+### 4. 스키마
 
 ```bash
-bun run migrate    # 테이블 + 확장 + 인덱스 생성
-bun run check-db   # 제대로 만들어졌는지 확인
+bun run migrate
+bun run check-db
 ```
 
-`check-db`는 확장과 인덱스를 확인하고, 합성 데이터를 잠깐 넣어 검색 쿼리를 끝까지 돌려본 뒤 지웁니다. 이런 출력이 나오면 정상입니다.
+`check-db`는 확장과 인덱스를 확인하고 합성 데이터로 검색 쿼리를 한 번 돌려본 뒤 지운다. API 비용은 들지 않는다.
 
 ```
 확장: pg_trgm 1.6, vector 0.8.6
@@ -107,9 +79,9 @@ bun run check-db   # 제대로 만들어졌는지 확인
   0.0328  결제 API 타임아웃
 ```
 
-### 5. 슬랙 앱 만들기
+### 5. 슬랙 앱
 
-[api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest** → 워크스페이스 선택 후 아래 YAML을 붙여넣습니다.
+[api.slack.com/apps](https://api.slack.com/apps)에서 Create New App → From a manifest를 고르고 아래를 붙여넣는다.
 
 ```yaml
 display_information:
@@ -136,195 +108,120 @@ settings:
   token_rotation_enabled: false
 ```
 
-> **이벤트 구독은 일부러 빼놨습니다.** 슬랙은 Request URL을 등록할 때 그 주소로 검증 요청을 보내는데, 그 요청에도 서명이 붙어 있어 **Signing Secret 없이는 통과할 수 없습니다.** 앱을 먼저 만들어 시크릿을 받고, 그 다음에 URL을 등록해야 순환에 빠지지 않습니다.
+이벤트 구독은 일부러 넣지 않았다. 슬랙은 Request URL을 등록할 때 그 주소로 검증 요청을 보내는데 그 요청에도 서명이 붙어 있어서, Signing Secret 없이는 통과할 수 없다. 앱을 먼저 만들어 시크릿을 받고 URL은 나중에 등록해야 순환에 빠지지 않는다.
 
-**Install to Workspace**를 눌러 설치합니다.
+Install to Workspace를 누른 뒤 두 값을 `.env.local`에 넣는다.
 
-| 값 | 위치 |
-|---|---|
-| `SLACK_BOT_TOKEN` (`xoxb-`로 시작) | OAuth & Permissions → Bot User OAuth Token |
-| `SLACK_SIGNING_SECRET` | Basic Information → App Credentials → Signing Secret |
+- `SLACK_BOT_TOKEN` — OAuth & Permissions의 Bot User OAuth Token (`xoxb-`로 시작)
+- `SLACK_SIGNING_SECRET` — Basic Information의 Signing Secret
 
-`.env.local`에 두 값을 넣습니다.
-
-### 6. 서버 실행
+### 6. 서버
 
 ```bash
 bun run dev
-```
-
-확인:
-
-```bash
 curl -o /dev/null -w "%{http_code}\n" http://localhost:3000/api/webhooks/slack
 ```
 
-**401**이 나와야 정상입니다. 서명 없는 요청을 제대로 거부한다는 뜻입니다. 500이 나오면 시크릿이 로드되지 않은 것이니 서버를 재시작하십시오.
+401이 나오면 정상이다. 서명 없는 요청을 거부하고 있다는 뜻이다. 500이면 시크릿이 로드되지 않은 것이니 서버를 재시작한다.
 
-### 7. 로컬을 인터넷에 노출
+### 7. 터널
 
-슬랙은 인터넷에서 우리 서버로 접속해야 하는데 `localhost`는 외부에서 닿지 않습니다. 개발 중에는 터널로 임시 공개 주소를 만듭니다.
+슬랙은 인터넷에서 우리 서버에 접속해야 하는데 `localhost`는 외부에서 닿지 않는다. 개발 중에는 터널로 임시 주소를 만든다.
 
 ```bash
 brew install cloudflared
 cloudflared tunnel --url http://localhost:3000
 ```
 
-출력되는 `https://....trycloudflare.com` 주소를 복사합니다. **재시작할 때마다 주소가 바뀝니다.**
+출력되는 `https://....trycloudflare.com` 주소를 쓴다. 재시작하면 주소가 바뀐다.
 
-### 8. 이벤트 구독 등록
+### 8. 이벤트 구독
 
-앱 설정 → **Event Subscriptions** → Enable Events **On**
+앱 설정의 Event Subscriptions를 켜고 Request URL에 `https://<터널주소>/api/webhooks/slack`을 넣는다. Verified가 뜨면 Subscribe to bot events에 두 개를 추가한다.
 
-Request URL에 입력:
+- `app_mention` — 봇을 부르는 순간
+- `message.im` — DM
 
-```
-https://<터널주소>/api/webhooks/slack
-```
+채널 메시지 이벤트(`message.channels`, `message.groups`)는 구독하지 않는다. 봇은 자기를 부른 메시지만 받고, 스레드 원문은 불렸을 때 그 자리에서 읽어온다.
 
-**Verified ✓** 가 뜨면 **Subscribe to bot events**에 두 개를 추가합니다.
+저장 후 재설치 배너가 뜨면 Reinstall을 누른다.
 
-| 이벤트 | 필요한 이유 |
-|---|---|
-| `app_mention` | 봇을 부르는 순간을 받는다 |
-| `message.im` | DM에서는 멘션 없이 대화한다 |
-
-> 채널 메시지 이벤트(`message.channels`, `message.groups`)는 구독하지 않습니다. 봇은 **자기를 부른 메시지만** 받게 되므로, 채널의 모든 대화가 봇 서버로 흘러가지 않습니다. 스레드 원문은 봇이 불렸을 때 그때 읽어옵니다.
-
-**Save Changes** 후 재설치 배너가 뜨면 **Reinstall**.
-
-### 9. 채널에 초대하고 테스트
+### 9. 테스트
 
 ```
 /invite @지식봇
 ```
 
-스레드에 대화를 몇 줄 남긴 뒤:
+스레드에 대화를 몇 줄 남기고 요약과 저장을 시켜본다. 다른 스레드에 비슷한 증상을 적고 `관련 이슈 있었어?`를 물으면 저장한 기록을 찾아온다.
 
-```
-@지식봇 이 스레드 요약해줘
-@지식봇 이 스레드 지식 저장해줘
-```
+마지막으로 지식베이스에 없는 주제를 물어본다. "관련 기록 없어요"라고 답해야 한다. 억지로 무언가를 물어오면 [related.ts](src/domain/knowledge/related.ts)의 판정 프롬프트를 조인다.
 
-다른 스레드에서 비슷한 증상을 적고 `@지식봇 관련 이슈 있었어?` 를 물어보면 저장된 기록을 찾아옵니다.
+## 배포
 
-**마지막으로 무관한 질문을 던져보십시오.** 지식베이스에 없는 주제를 물었을 때 **"관련 기록 없어요"** 라고 답해야 합니다. 억지로 뭔가를 물어온다면 판정이 느슨한 것이니 [related.ts](src/domain/knowledge/related.ts)의 프롬프트를 조여야 합니다.
+터널은 개발용이다. Vercel에 저장소를 임포트하고 `.env.local`의 값을 Environment Variables에 넣은 다음, Event Subscriptions의 Request URL을 `https://<프로젝트>.vercel.app/api/webhooks/slack`으로 바꾸면 된다.
 
----
-
-## 배포 (Vercel)
-
-터널은 개발용입니다. 배포하면 주소가 고정되고 노트북을 꺼도 봇이 삽니다.
-
-1. Vercel에 저장소를 임포트합니다.
-2. `.env.local`의 값을 **Environment Variables**에 그대로 넣습니다.
-3. 배포 후 Event Subscriptions의 Request URL을 `https://<프로젝트>.vercel.app/api/webhooks/slack`으로 바꿉니다.
-
-> **Hobby 플랜의 함수 최대 실행 시간은 60초입니다.** 이 봇의 파이프라인은 20~40초가 걸리므로 들어가긴 하지만 여유가 크지 않습니다. 긴 스레드에서 타임아웃이 나면 Pro(최대 300초)를 검토하십시오.
-
----
+Hobby 플랜의 함수 최대 실행 시간은 60초다. 이 봇은 20~40초를 쓰므로 들어가긴 하지만 여유가 크지 않다. 긴 스레드에서 타임아웃이 나면 Pro(300초)를 봐야 한다.
 
 ## 비용
 
-### 실측값
+`LOG_LLM_USAGE=1 bun run smoke`로 측정한 값이다. 메시지 5~8개짜리 한국어 스레드 기준.
 
-아래는 `bun run smoke`를 `LOG_LLM_USAGE=1`로 돌려 **실제로 측정한 값**입니다. 메시지 5~8개짜리 한국어 스레드 기준입니다.
-
-| 동작 | 입력 토큰 | 출력 토큰 | 비용 |
+| 호출 | 입력 | 출력 | 비용 |
 |---|---|---|---|
-| 추출 (저장·검색이 공유) | 2,400 ~ 2,800 | 180 ~ 310 | **$0.017 ~ 0.022** |
-| 관련성 판정 | ~1,700 | 9 ~ 190 | **$0.009 ~ 0.013** |
+| 추출 (저장과 검색이 공유) | 2,400~2,800 | 180~310 | $0.017~0.022 |
+| 관련성 판정 | ~1,700 | 9~190 | $0.009~0.013 |
 
-명령별로 환산하면:
+명령 단위로는 저장이 회당 약 $0.02(30원), 검색이 약 $0.03(45원)이다. 요약과 기술검토는 에이전트 호출이라 따로 재지 않았고, 입력 크기로 보면 $0.02~0.05 사이일 것이다.
 
-| 명령 | 호출 구성 | 회당 비용 |
-|---|---|---|
-| 지식 저장 | 추출 1회 + 임베딩 | **약 $0.02** (약 30원) |
-| 관련 이슈 검색 | 추출 1회 + 판정 1회 | **약 $0.03** (약 45원) |
-| 요약 / 기술검토 | 에이전트 1~2스텝 | **약 $0.02 ~ 0.05** (미측정, 입력 크기 기준 추정) |
+입력 토큰은 스레드 길이에 비례한다. 메시지 50개짜리 스레드면 입력이 5~10배가 되므로 위 값은 하한이다. 한국어는 같은 내용이라도 영어보다 토큰을 더 먹는다.
 
-**입력 토큰은 스레드 길이에 비례합니다.** 메시지 50개짜리 긴 스레드면 입력이 5~10배가 되므로, 위 값은 하한으로 보시는 게 맞습니다. 한국어는 같은 내용이라도 영어보다 토큰이 더 나옵니다.
+하루 5회 쓰면 월 $4, 50회면 월 $38, 200회면 월 $150 정도다.
 
-### 사용량별 월 비용
+단가는 `claude-opus-5`가 입력 $5 / 출력 $25(1M 토큰당), `text-embedding-3-large`가 $0.13이다. 임베딩 쪽은 사실상 공짜다. Entry 1,000건에 검색 5,000회를 합쳐도 $0.26이다.
 
-| 시나리오 | 하루 호출 | 월 LLM 비용 |
-|---|---|---|
-| 개인 실험 | 5회 | **약 $4** |
-| 소규모 팀 | 50회 | **약 $38** |
-| 전사 활용 | 200회 | **약 $150** |
+인프라는 Neon 무료 티어가 0.5GB인데 Entry 하나가 8KB 남짓(1536차원 벡터 6KB + 텍스트)이라 6만 건까지 들어간다. Vercel은 Hobby가 무료지만 상업적 사용이 금지돼 있어서, 회사에서 쓰려면 Pro가 필요하다(사용자당 월 $20, 연간 기준).
 
-### 단가
-
-| 항목 | 단가 | 비고 |
-|---|---|---|
-| `claude-opus-5` 입력 | $5 / 1M 토큰 | 추출·판정·응답 |
-| `claude-opus-5` 출력 | $25 / 1M 토큰 | |
-| `text-embedding-3-large` | $0.13 / 1M 토큰 | 1536차원으로 축소 사용 |
-
-**임베딩 비용은 사실상 0입니다.** Entry 1,000건 저장 + 검색 5,000회를 합쳐도 2M 토큰 미만이라 **$0.26** 수준입니다.
-
-### 인프라
-
-| 항목 | 무료 범위 | 넘어가면 |
-|---|---|---|
-| **Neon (Postgres)** | 0.5GB 저장 + 월 100 CU-hours | Entry 하나가 약 8KB(1536차원 벡터 6KB + 텍스트)라 **약 6만 건**까지 무료 티어에 들어갑니다 |
-| **Vercel** | Hobby 무료 | **Hobby는 상업적 사용이 금지됩니다.** 회사에서 쓰려면 Pro($20/사용자/월, 연간 기준)가 필요합니다 |
-
-즉 **개인이 실험하는 동안은 LLM 비용만 나갑니다.** 회사에 도입하면 Vercel Pro가 더해집니다.
-
-### 비용을 줄이려면
-
-첫 번째 손잡이는 `effort`입니다. [extract.ts](src/domain/knowledge/extract.ts)와 [related.ts](src/domain/knowledge/related.ts)에 `effort: "high"`로 되어 있습니다. 다만 **추출 품질이 나쁘면 그 기록은 영원히 나쁜 채로 검색되므로**, 저장 경로부터 내리는 건 권하지 않습니다. 요약처럼 판단이 덜 필요한 경로를 먼저 낮추거나, 모델을 `claude-sonnet-5`($3/$15)로 바꾸는 편이 낫습니다.
-
----
+비용을 줄이려면 `effort`부터 손대게 되는데, 저장 경로는 건드리지 않는 편이 낫다. 추출이 나쁘면 그 기록은 계속 나쁜 채로 검색된다. 요약처럼 판단이 덜 필요한 경로를 먼저 낮추거나 모델을 `claude-sonnet-5`($3/$15)로 바꾸는 쪽이 낫다.
 
 ## 스크립트
 
-| 명령 | 설명 |
+| 명령 | |
 |---|---|
 | `bun run dev` | 개발 서버 |
 | `bun run build` | 프로덕션 빌드 |
 | `bun run migrate` | 마이그레이션 적용 |
-| `bun run check-db` | 확장·인덱스·검색 쿼리 확인 (API 비용 없음) |
-| `bun run smoke` | 저장→검색까지 실제 API로 관통 테스트 (**비용 발생**) |
+| `bun run check-db` | 확장·인덱스·검색 쿼리 확인 |
+| `bun run smoke` | 저장부터 검색까지 실제 API로 관통 (비용 발생) |
 | `bun run typecheck` | 타입 검사 |
 
-`LOG_LLM_USAGE=1`을 붙이면 LLM 호출마다 토큰 사용량과 비용이 찍힙니다.
+`LOG_LLM_USAGE=1`을 붙이면 LLM 호출마다 토큰과 비용이 찍힌다.
 
----
-
-## 프로젝트 구조
+## 구조
 
 ```
 src/domain/knowledge/     슬랙도 프레임워크도 모르는 층
-  types.ts       도메인 타입 (SourceThread, EntryDraft, KnowledgeEntry)
+  types.ts       SourceThread, EntryDraft, KnowledgeEntry
   transcript.ts  스레드를 LLM이 읽을 형태로 펼치기
-  extract.ts     스레드 → EntryDraft (저장과 검색이 공유)
+  extract.ts     스레드에서 기록 뽑아내기
   embed.ts       1536차원 임베딩
   repository.ts  SQL
-  save.ts        저장 / 삭제
-  search.ts      하이브리드 후보 수집 (벡터 + 트라이그램, RRF 병합)
-  related.ts     LLM 판정
+  save.ts        저장과 삭제
+  search.ts      벡터 + 트라이그램 후보 수집
+  related.ts     관련성 판정
 
-src/lib/                  슬랙과 만나는 얇은 층
-  slack-thread.ts  Chat SDK Thread → SourceThread, permalink 조회
+src/lib/                  슬랙과 만나는 층
+  slack-thread.ts  Chat SDK Thread를 SourceThread로, permalink 조회
   agent.ts         도구를 쥔 에이전트
   bot.ts           핸들러
   db.ts, models.ts
 
 migrations/    스키마
-scripts/       마이그레이션·점검·스모크 테스트
+scripts/       마이그레이션, 점검, 스모크 테스트
 ```
 
-도메인 로직이 슬랙과 프레임워크 바깥에 있는 이유는 **런타임을 갈아탈 때 껍데기만 다시 쓰기 위해서**입니다. 덤으로 슬랙 없이 테스트할 수 있습니다 — `bun run smoke`가 그 방식으로 돕니다.
+도메인 로직을 슬랙과 프레임워크 밖에 둔 건 런타임을 옮길 때 껍데기만 다시 쓰기 위해서다. 슬랙 없이 테스트할 수 있는 것도 여기서 나온다. `bun run smoke`가 그 방식으로 돈다.
 
----
-
-## 만들어진 배경
-
-[Chat SDK](https://chat-sdk.dev) 위에 올려서, 나중에 Teams나 Discord로 확장할 때 어댑터만 추가하면 되도록 했습니다.
-
-설계 과정에서 내린 결정들 — 왜 스레드 하나에 기록 하나인지, 왜 미해결도 저장하는지, 왜 검색이 정밀도 우선인지, 왜 기술검토가 판정하지 않고 질문하는지 — 은 전부 [CONTEXT.md](CONTEXT.md)에 이유와 함께 적혀 있습니다.
+[Chat SDK](https://chat-sdk.dev) 위에 올려서 Teams나 Discord로 넓힐 때는 어댑터만 추가하면 된다.
 
 ## License
 
