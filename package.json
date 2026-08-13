@@ -12,13 +12,17 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.38",
+    "@ai-sdk/openai": "^4.0.41",
     "@chat-adapter/slack": "latest",
     "@chat-adapter/state-pg": "latest",
+    "ai": "^7.0.64",
     "chat": "latest",
     "next": "^16.2.3",
     "pg": "^8.23.0",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "react-dom": "^19.2.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
