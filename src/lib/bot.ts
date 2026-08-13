@@ -54,11 +54,14 @@ async function respond(thread: Thread, message: Message) {
 }
 
 function registerHandlers(chat: Chat) {
-  chat.onNewMention(async (thread, message) => {
-    // 한 번 불린 스레드는 계속 듣는다. 이후에는 멘션 없이 말을 걸 수 있다.
-    await thread.subscribe();
-    await respond(thread, message);
-  });
+  // 채널에서는 부를 때만 답한다.
+  //
+  // 스레드를 구독해두면 이후 모든 메시지가 에이전트를 한 번씩 돌린다. 30개가 오가는
+  // 장애 스레드면 호출 30회에 봇이 30번 끼어드는 셈인데, 대응 중에는 그게 방해다.
+  // 비용도 스레드 길이에 비례해 늘어난다. 부를 때만 오는 편이 예측 가능하고, 봇이
+  // 채널의 모든 메시지를 받아볼 이유도 없어진다.
+  chat.onNewMention(respond);
 
-  chat.onSubscribedMessage(respond);
+  // DM은 다르다. 둘만 있는 대화에서 매번 멘션하라는 건 어색하다.
+  chat.onDirectMessage(respond);
 }

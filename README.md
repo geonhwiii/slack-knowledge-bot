@@ -10,7 +10,7 @@
 @봇 이 기록 삭제해줘            → 지식베이스에서 제거
 ```
 
-한 번 부르면 그 스레드를 계속 듣기 때문에, 이후에는 멘션 없이 말을 걸어도 됩니다.
+채널에서는 **부를 때만** 답합니다. 스레드를 구독해두면 이후 모든 메시지마다 봇이 끼어들고 비용도 메시지 수에 비례해 늘어나는데, 장애 대응 중에는 그게 방해입니다. DM에서는 멘션 없이 그냥 말하면 됩니다.
 
 설계 배경과 용어 정의는 [CONTEXT.md](CONTEXT.md)에 있습니다.
 
@@ -182,14 +182,14 @@ Request URL에 입력:
 https://<터널주소>/api/webhooks/slack
 ```
 
-**Verified ✓** 가 뜨면 **Subscribe to bot events**에 네 개를 추가합니다.
+**Verified ✓** 가 뜨면 **Subscribe to bot events**에 두 개를 추가합니다.
 
 | 이벤트 | 필요한 이유 |
 |---|---|
 | `app_mention` | 봇을 부르는 순간을 받는다 |
-| `message.channels` | 공개 채널에서 멘션 없이 이어 말하기 |
-| `message.groups` | 비공개 채널에서 같은 동작 |
-| `message.im` | DM |
+| `message.im` | DM에서는 멘션 없이 대화한다 |
+
+> 채널 메시지 이벤트(`message.channels`, `message.groups`)는 구독하지 않습니다. 봇은 **자기를 부른 메시지만** 받게 되므로, 채널의 모든 대화가 봇 서버로 흘러가지 않습니다. 스레드 원문은 봇이 불렸을 때 그때 읽어옵니다.
 
 **Save Changes** 후 재설치 배너가 뜨면 **Reinstall**.
 
