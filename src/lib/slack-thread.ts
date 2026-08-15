@@ -53,10 +53,14 @@ export async function resolvePermalink(threadKey: string): Promise<string | unde
  * 그대로 두면 봇을 부르는 말이 프롬프트에 잡음으로 섞이고, 저장된 지식의 검색
  * 텍스트에도 의미 없는 ID가 들어간다. 누가 말했는지는 authorName이 이미 담고 있으므로
  * 여기서는 지운다.
+ *
+ * ID 뒤에 7자 이상을 요구하는 이유는 오탐 때문이다. 슬랙 ID는 U(또는 엔터프라이즈의 W)
+ * 뒤에 8자 이상이 붙는데, 길이를 느슨하게 두면 `@UBER`, `@WAF` 같은 평범한 대문자 약어까지
+ * 지워진다. 그렇게 사라진 고유명사는 아무 에러도 내지 않고 검색에서만 안 걸린다.
  */
 export function stripMentionIds(text: string): string {
   return text
-    .replace(/<?@[UW][A-Z0-9]{2,}>?/g, "")
+    .replace(/<?@[UW][A-Z0-9]{7,}>?/g, "")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 }

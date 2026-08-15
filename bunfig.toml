@@ -1,0 +1,3 @@
+[test]
+# `.env.local`을 읽어온다. 이유는 test/setup.ts 주석에 있다.
+preload = ["./test/setup.ts"]
