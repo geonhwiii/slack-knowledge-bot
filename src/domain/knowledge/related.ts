@@ -41,6 +41,47 @@ export interface RelatedKnowledgeResult {
 
 const MAX_ADJACENT = 2;
 
+/** 판정 모델이 고른 후보 하나. 번호는 1부터 센다 — 프롬프트에 그렇게 붙여서 보낸다. */
+export interface Selection {
+  candidate: number;
+  why: string;
+}
+
+/**
+ * 모델이 돌려준 후보 번호를 실제 Entry로 옮긴다.
+ *
+ * 번호는 모델이 생성한 값이라 후보 목록과 어긋날 수 있다. 없는 번호를 고르거나,
+ * 같은 것을 두 번 고르거나, 0을 주기도 한다. 여기서 걸러내지 않으면 undefined가
+ * 그대로 응답까지 흘러가 봇이 빈 링크를 내민다.
+ *
+ * 고르지 않은 후보는 인접 기록이 된다. 봇은 이것들이 관련 있다고 주장하지 않고,
+ * 참고용으로만 보여준다. 검색 순위대로 앞에서 몇 개만 남긴다 — 관련 없다고 판정된
+ * 것을 길게 늘어놓으면 단정한 부분과 참고 부분의 구분이 흐려진다.
+ */
+export function resolveJudgement(
+  selections: Selection[],
+  candidates: Candidate[],
+): Pick<RelatedKnowledgeResult, "related" | "adjacent"> {
+  const chosen = new Set<number>();
+  const related: RelatedMatch[] = [];
+
+  for (const selection of selections) {
+    const index = selection.candidate - 1;
+    const candidate = candidates[index];
+    if (!candidate || chosen.has(index)) continue;
+
+    chosen.add(index);
+    related.push({ entry: candidate.entry, why: selection.why });
+  }
+
+  const adjacent = candidates
+    .filter((_, index) => !chosen.has(index))
+    .slice(0, MAX_ADJACENT)
+    .map((candidate) => candidate.entry);
+
+  return { related, adjacent };
+}
+
 const judgementSchema = z.object({
   related: z
     .array(
@@ -132,21 +173,5 @@ export async function findRelatedKnowledge(
 
   logUsage("판정", usage);
 
-  // 번호는 모델이 만들어낸 값이라 범위를 벗어날 수 있다. 조용히 버린다.
-  const seen = new Set<number>();
-  const related: RelatedMatch[] = [];
-  for (const item of object.related) {
-    const index = item.candidate - 1;
-    const candidate = candidates[index];
-    if (!candidate || seen.has(index)) continue;
-    seen.add(index);
-    related.push({ entry: candidate.entry, why: item.why });
-  }
-
-  const adjacent = candidates
-    .filter((_, index) => !seen.has(index))
-    .slice(0, MAX_ADJACENT)
-    .map((candidate) => candidate.entry);
-
-  return { situation: draft.situation, draft, related, adjacent };
+  return { situation: draft.situation, draft, ...resolveJudgement(object.related, candidates) };
 }
