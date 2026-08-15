@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
 import { upsertEntry } from "@/domain/knowledge/repository";
+import { db } from "@/lib/db";
 import { findCandidates } from "@/domain/knowledge/search";
 import {
   axisVector,
@@ -230,6 +231,81 @@ describeDb("findCandidates", () => {
     });
 
     expect(keys(rows)).toContain("oldmodelkeyword");
+  });
+
+  test("옛 레시피로 만든 벡터는 벡터 검색에 끼지 않는다", async () => {
+    // 모델은 그대로인데 임베딩에 넣는 텍스트만 바뀐 경우다. 좌표계가 달라진 건
+    // 매한가지인데 모델 이름만 봐서는 구분이 안 되므로 버전을 따로 본다.
+    await upsertEntry(
+      testEntry({
+        namespace: NS,
+        suffix: "oldrecipe",
+        embedding: axisVector(QUERY_AXIS),
+        embeddingVersion: 1,
+        searchText: "옛 레시피로 만든 벡터",
+      }),
+    );
+    await upsertEntry(
+      testEntry({
+        namespace: NS,
+        suffix: "currentrecipe",
+        embedding: blendedVector(QUERY_AXIS, FAR_AXIS, 0.5),
+        searchText: "현재 레시피",
+      }),
+    );
+
+    const rows = await findCandidates({
+      keywordQuery: NO_MATCH_QUERY,
+      embedding: axisVector(QUERY_AXIS),
+      limit: 50,
+    });
+
+    // oldrecipe 쪽이 벡터로는 더 가까운데도 빠져야 한다.
+    expect(keys(rows)).toEqual(["currentrecipe"]);
+  });
+
+  test("대체된 결정은 검색에 나오지 않는다", async () => {
+    // 폐기된 결정을 근거로 답하는 것은 아무 답도 못 하는 것보다 나쁘다. 없으면
+    // 사람이 찾아보지만, 틀린 답이 나오면 그대로 믿는다.
+    const current = await upsertEntry(
+      testEntry({
+        namespace: NS,
+        suffix: "current-decision",
+        kind: "decision",
+        embedding: blendedVector(QUERY_AXIS, FAR_AXIS, 0.5),
+        searchText: `JWT로 전환 ${UNIQUE_CODE}`,
+      }),
+    );
+    const outdated = await upsertEntry(
+      testEntry({
+        namespace: NS,
+        suffix: "outdated-decision",
+        kind: "decision",
+        embedding: axisVector(QUERY_AXIS),
+        searchText: `세션 기반으로 간다 ${UNIQUE_CODE}`,
+      }),
+    );
+
+    const before = await findCandidates({
+      keywordQuery: UNIQUE_CODE,
+      embedding: axisVector(QUERY_AXIS),
+      limit: 50,
+    });
+    expect(keys(before)).toContain("outdated-decision");
+
+    await db().query("UPDATE knowledge_entry SET superseded_by = $2 WHERE id = $1", [
+      outdated.id,
+      current.id,
+    ]);
+
+    const after = await findCandidates({
+      keywordQuery: UNIQUE_CODE,
+      embedding: axisVector(QUERY_AXIS),
+      limit: 50,
+    });
+
+    // 벡터로도 키워드로도 더 잘 맞는 쪽이 폐기된 결정인데, 양쪽 팔 모두에서 빠져야 한다.
+    expect(keys(after)).toEqual(["current-decision"]);
   });
 
   test("limit을 넘겨서 돌려주지 않는다", async () => {

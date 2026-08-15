@@ -1,6 +1,6 @@
 import { describe } from "bun:test";
 import { db } from "@/lib/db";
-import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL_ID } from "@/lib/models";
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL_ID, EMBEDDING_RECIPE_VERSION } from "@/lib/models";
 import type { EntryRecord } from "@/domain/knowledge/repository";
 
 /**
@@ -86,9 +86,11 @@ export function testEntry({ namespace, suffix, ...overrides }: TestEntryOptions)
     participants: ["테스터"],
     messageCount: 1,
     savedBy: "테스터",
+    sourceTranscript: "[2026-03-01T00:00:00.000Z] 테스터: 테스트 원문",
     searchText,
     embedding: axisVector(0),
     embeddingModel: EMBEDDING_MODEL_ID,
+    embeddingVersion: EMBEDDING_RECIPE_VERSION,
     ...overrides,
   };
 }

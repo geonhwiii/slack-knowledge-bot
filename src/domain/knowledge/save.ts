@@ -1,8 +1,14 @@
 import { collectParticipants, extractDraft } from "./extract";
 import { embedText } from "./embed";
 import { deleteEntryByThreadKey, getEntryByThreadKey, upsertEntry } from "./repository";
-import { EMBEDDING_MODEL_ID } from "@/lib/models";
-import { buildSearchText, type KnowledgeEntry, type SourceThread } from "./types";
+import { EMBEDDING_MODEL_ID, EMBEDDING_RECIPE_VERSION } from "@/lib/models";
+import { renderTranscript } from "./transcript";
+import {
+  buildSearchText,
+  buildSituationText,
+  type KnowledgeEntry,
+  type SourceThread,
+} from "./types";
 
 /**
  * 저장과 삭제. 추출·임베딩·저장을 엮는 자리이고, 슬랙은 여전히 모른다.
@@ -22,7 +28,8 @@ export async function saveThreadAsKnowledge(
   const searchText = buildSearchText(draft);
 
   // 임베딩은 추출 결과에 대해 만든다. 원문 전체로 만들면 잡담이 섞여 벡터가 희석된다.
-  const embedding = await embedText(searchText);
+  // 그중에서도 상황만 넣는 이유는 buildSituationText 주석에 있다.
+  const embedding = await embedText(buildSituationText(draft));
 
   const existing = await getEntryByThreadKey(thread.key);
 
@@ -35,9 +42,13 @@ export async function saveThreadAsKnowledge(
     participants: collectParticipants(thread),
     messageCount: thread.messages.length,
     savedBy,
+    // 추출 프롬프트도 모델도 앞으로 바뀐다. 원문을 함께 남겨야 그때 이미 쌓인
+    // 기록까지 다시 뽑을 수 있다. 슬랙에 다시 가서 읽어오는 길은 생각보다 잘 끊긴다.
+    sourceTranscript: renderTranscript(thread),
     searchText,
     embedding,
     embeddingModel: EMBEDDING_MODEL_ID,
+    embeddingVersion: EMBEDDING_RECIPE_VERSION,
   });
 
   return { entry, created: existing === null };

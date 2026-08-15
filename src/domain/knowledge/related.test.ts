@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { resolveJudgement } from "./related";
+import { buildKeywordQuery, resolveJudgement } from "./related";
 import type { Candidate } from "./search";
-import type { KnowledgeEntry } from "./types";
+import type { EntryDraft, KnowledgeEntry } from "./types";
 
 function candidate(title: string, score = 0.05): Candidate {
   return {
@@ -23,7 +23,10 @@ function candidate(title: string, score = 0.05): Candidate {
       participants: [],
       messageCount: 3,
       savedBy: "Dan",
+      supersededBy: null,
+      recurrenceOf: null,
       embeddingModel: "text-embedding-3-large",
+      embeddingVersion: 2,
       createdAt: new Date("2026-03-01T00:00:00Z"),
       updatedAt: new Date("2026-03-01T00:00:00Z"),
     } satisfies KnowledgeEntry,
@@ -35,6 +38,47 @@ const candidates = [candidate("가"), candidate("나"), candidate("다"), candid
 function titles(entries: { title: string }[]): string[] {
   return entries.map((entry) => entry.title);
 }
+
+function draft(overrides: Partial<EntryDraft> = {}): EntryDraft {
+  return {
+    kind: "issue",
+    status: "unresolved",
+    title: "결제 승인 실패",
+    situation: "결제 승인 요청이 30초 넘게 걸리다 실패하고, 재시도해도 같은 증상이 반복된다",
+    cause: null,
+    resolution: null,
+    systems: ["payment-api", "ERR_PAYMENT_5031"],
+    tags: ["결제"],
+    ...overrides,
+  };
+}
+
+describe("buildKeywordQuery", () => {
+  test("고유명사만 넘긴다", () => {
+    expect(buildKeywordQuery(draft())).toBe("payment-api ERR_PAYMENT_5031 결제");
+  });
+
+  test("상황 문장을 넣지 않는다", () => {
+    // word_similarity는 연속된 구간을 비교하므로, 긴 문장을 넣으면 그 안의 에러 코드가
+    // 묻힌다. 벡터가 못 잡는 걸 잡으라고 둔 팔이 벡터와 같은 것을 보게 된다.
+    const query = buildKeywordQuery(draft());
+
+    expect(query).not.toContain("30초");
+    expect(query.length).toBeLessThan(draft().situation.length);
+  });
+
+  test("시스템도 태그도 없으면 제목으로 대신한다", () => {
+    // 잡담에 가까운 스레드에서 실제로 일어난다. 빈 문자열을 넘기면 키워드 검색이
+    // 통째로 죽는데, 제목은 그나마 짧고 구체적이다.
+    expect(buildKeywordQuery(draft({ systems: [], tags: [] }))).toBe("결제 승인 실패");
+  });
+
+  test("빈 문자열이 섞여도 공백만 남기지 않는다", () => {
+    expect(buildKeywordQuery(draft({ systems: ["", "payment-api"], tags: [""] }))).toBe(
+      "payment-api",
+    );
+  });
+});
 
 describe("resolveJudgement", () => {
   test("1부터 세는 번호를 후보에 맞춘다", () => {

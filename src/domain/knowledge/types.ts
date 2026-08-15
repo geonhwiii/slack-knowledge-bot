@@ -67,29 +67,63 @@ export interface KnowledgeEntry extends EntryDraft {
   /** 저장을 지시한 사람. 전 공개 정책이므로 "누가 공개했는가"의 기록이기도 하다. */
   savedBy: string;
   /**
+   * 이 결정을 대체한 Entry. `decision`이 뒤집혔을 때 채워진다.
+   *
+   * 채워진 Entry는 검색 후보에서 빠진다. 폐기된 결정을 근거로 답하는 것은
+   * 아무 답도 못 하는 것보다 나쁘기 때문이다.
+   */
+  supersededBy: string | null;
+  /**
+   * 같은 증상의 앞선 기록. 세 번째 재발이면 두 번째를 가리킨다.
+   *
+   * 합치지 않고 잇는 이유는 "몇 번 반복됐는가"가 그 자체로 답이기 때문이다.
+   */
+  recurrenceOf: string | null;
+  /**
    * 이 행의 embedding을 만든 모델. 모델을 바꾸면 벡터 공간이 달라져 전량 재생성이
    * 필요하므로, 어느 벡터가 옛 모델의 것인지 구분할 수 있어야 한다.
    */
   embeddingModel: string | null;
+  /** 임베딩 입력을 만든 방식의 버전. models.ts의 EMBEDDING_RECIPE_VERSION 참고. */
+  embeddingVersion: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
+function joinParts(parts: (string | null)[]): string {
+  return parts.filter((part): part is string => Boolean(part)).join("\n");
+}
+
 /**
- * Entry에서 검색 대상 텍스트를 만든다.
+ * 트라이그램 검색이 훑는 텍스트. 아는 것을 전부 넣는다.
  *
- * 임베딩과 트라이그램 인덱스가 같은 텍스트를 보게 해서, 두 검색이 서로 다른 것을
- * 가리키는 상황을 만들지 않는다.
+ * 여기는 재현율 쪽에 선다. 에러 코드나 서비스 이름이 원인 설명에만 등장하는 일이
+ * 흔한데, 그 코드로 검색했을 때 걸리지 않으면 키워드 검색을 붙인 의미가 없다.
  */
 export function buildSearchText(draft: EntryDraft): string {
-  return [
+  return joinParts([
     draft.title,
     draft.situation,
     draft.cause,
     draft.resolution,
     ...draft.systems,
     ...draft.tags,
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join("\n");
+  ]);
+}
+
+/**
+ * 임베딩에 넣을 텍스트. 상황만 남긴다.
+ *
+ * 해결책을 빼는 이유는 비교가 성립하지 않기 때문이다. "이거 전에 있었어?"를 묻는
+ * 스레드는 아직 진행 중이라 cause와 resolution이 비어 있는 게 정상인데, 저장된 쪽에는
+ * 그게 길게 적혀 있다. 그 상태로 벡터를 비교하면 질의는 상황만 가리키고 문서는
+ * 상황+해결책을 가리켜서, 해결책이 자세히 적힌 좋은 기록일수록 상황 신호가 묽어진다.
+ * 정작 제일 중요한 순간 — 장애가 진행 중일 때 — 매칭이 나빠진다.
+ *
+ * 시스템 이름은 남긴다. 임베딩이 고유명사에 약한 건 맞지만, "결제 타임아웃"과
+ * "배치 타임아웃"을 가르는 데는 쓸모가 있다. 질의 쪽 스레드에서도 같이 추출되므로
+ * 양쪽이 대칭이다.
+ */
+export function buildSituationText(draft: EntryDraft): string {
+  return joinParts([draft.title, draft.situation, ...draft.systems]);
 }

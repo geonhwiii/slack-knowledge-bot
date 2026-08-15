@@ -2,9 +2,12 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import {
   deleteEntryByThreadKey,
   getEntryByThreadKey,
+  listEntriesWithStaleEmbedding,
+  updateEmbedding,
   upsertEntry,
 } from "@/domain/knowledge/repository";
-import { EMBEDDING_DIMENSIONS } from "@/lib/models";
+import { db } from "@/lib/db";
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL_ID, EMBEDDING_RECIPE_VERSION } from "@/lib/models";
 import { axisVector, cleanupTestEntries, describeDb, testEntry } from "./helpers";
 
 const NS = "repository";
@@ -133,6 +136,86 @@ describeDb("repository", () => {
     const loaded = await getEntryByThreadKey(record.threadKey);
     expect(loaded).not.toBeNull();
     expect(embedding).toHaveLength(EMBEDDING_DIMENSIONS);
+  });
+
+  test("원문을 함께 저장한다", async () => {
+    // 추출 프롬프트가 바뀌었을 때 다시 뽑을 재료다. 이게 없으면 이미 쌓인 Entry는
+    // 영원히 옛 품질로 남는다 — 슬랙 무료 플랜은 90일이 지나면 원문을 안 보여준다.
+    const transcript = "[2026-03-01T04:00:00.000Z] Dan: 결제가 안 돼요";
+    const record = testEntry({
+      namespace: NS,
+      suffix: "transcript",
+      sourceTranscript: transcript,
+    });
+    await upsertEntry(record);
+
+    const { rows } = await db().query<{ source_transcript: string }>(
+      "SELECT source_transcript FROM knowledge_entry WHERE thread_key = $1",
+      [record.threadKey],
+    );
+
+    expect(rows[0].source_transcript).toBe(transcript);
+  });
+
+  test("재저장이 Entry 사이의 관계를 끊지 않는다", async () => {
+    // superseded_by와 recurrence_of는 스레드에서 추출되는 값이 아니라 사람이 맺어준
+    // 관계다. 스레드를 다시 읽었다고 지워지면, 재저장 한 번에 조용히 끊기고 다시
+    // 맺을 방법도 없다.
+    const older = await upsertEntry(testEntry({ namespace: NS, suffix: "older" }));
+    const newer = await upsertEntry(testEntry({ namespace: NS, suffix: "newer" }));
+
+    await db().query(
+      "UPDATE knowledge_entry SET superseded_by = $2, recurrence_of = $2 WHERE id = $1",
+      [newer.id, older.id],
+    );
+
+    const resaved = await upsertEntry(
+      testEntry({ namespace: NS, suffix: "newer", title: "다시 저장한 제목" }),
+    );
+
+    expect(resaved.title).toBe("다시 저장한 제목");
+    expect(resaved.supersededBy).toBe(older.id);
+    expect(resaved.recurrenceOf).toBe(older.id);
+  });
+
+  test("가리키던 Entry가 지워지면 관계만 끊고 행은 남는다", async () => {
+    // 전 공개 정책상 삭제가 유일한 사고 대응 수단이라, 삭제가 다른 Entry까지
+    // 끌고 사라지면 안 된다.
+    const target = await upsertEntry(testEntry({ namespace: NS, suffix: "cascade-target" }));
+    const pointer = await upsertEntry(testEntry({ namespace: NS, suffix: "cascade-pointer" }));
+
+    await db().query("UPDATE knowledge_entry SET recurrence_of = $2 WHERE id = $1", [
+      pointer.id,
+      target.id,
+    ]);
+    await deleteEntryByThreadKey(target.threadKey);
+
+    const survivor = await getEntryByThreadKey(pointer.threadKey);
+    expect(survivor).not.toBeNull();
+    expect(survivor!.recurrenceOf).toBeNull();
+  });
+
+  test("새 Entry는 현재 레시피 버전으로 저장된다", async () => {
+    const saved = await upsertEntry(testEntry({ namespace: NS, suffix: "version" }));
+    expect(saved.embeddingVersion).toBe(EMBEDDING_RECIPE_VERSION);
+  });
+
+  test("낡은 벡터를 가진 Entry를 찾아 갈아끼운다", async () => {
+    // 레시피를 올리면 옛 행은 벡터 검색에서 빠진다. 되살리는 경로가 실제로 도는지 본다.
+    const stale = await upsertEntry(
+      testEntry({ namespace: NS, suffix: "stale", embeddingVersion: 1 }),
+    );
+
+    const before = await listEntriesWithStaleEmbedding(
+      EMBEDDING_MODEL_ID,
+      EMBEDDING_RECIPE_VERSION,
+    );
+    expect(before.map((entry) => entry.id)).toContain(stale.id);
+
+    await updateEmbedding(stale.id, axisVector(5), EMBEDDING_MODEL_ID, EMBEDDING_RECIPE_VERSION);
+
+    const after = await listEntriesWithStaleEmbedding(EMBEDDING_MODEL_ID, EMBEDDING_RECIPE_VERSION);
+    expect(after.map((entry) => entry.id)).not.toContain(stale.id);
   });
 
   test("없는 스레드를 물으면 null이다", async () => {

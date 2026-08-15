@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { EMBEDDING_MODEL_ID } from "@/lib/models";
+import { EMBEDDING_MODEL_ID, EMBEDDING_RECIPE_VERSION } from "@/lib/models";
 import { toVectorLiteral } from "./embed";
 import type { KnowledgeEntry } from "./types";
 
@@ -52,7 +52,10 @@ interface CandidateRow {
   participants: string[];
   message_count: number;
   saved_by: string;
+  superseded_by: string | null;
+  recurrence_of: string | null;
   embedding_model: string | null;
+  embedding_version: number;
   created_at: Date;
   updated_at: Date;
   score: string;
@@ -78,6 +81,11 @@ export async function findCandidates(input: FindCandidatesInput): Promise<Candid
     await client.query("BEGIN");
     await client.query(`SET LOCAL pg_trgm.word_similarity_threshold = ${WORD_SIMILARITY_THRESHOLD}`);
 
+    // HNSW는 인덱스를 먼저 훑고 필터를 나중에 적용한다. 필터를 통과하는 행이 ef_search
+    // 안에서 LIMIT을 못 채우면 에러 없이 결과가 줄어든다 — 조용히 나빠지는 종류라
+    // 알아채기 어렵다. 반복 스캔을 켜면 부족한 만큼 더 훑는다(pgvector 0.8+).
+    await client.query("SET LOCAL hnsw.iterative_scan = relaxed_order");
+
     const { rows } = await client.query<CandidateRow>(
       `
       WITH vector_hits AS (
@@ -85,6 +93,8 @@ export async function findCandidates(input: FindCandidatesInput): Promise<Candid
         FROM knowledge_entry
         WHERE embedding IS NOT NULL
           AND embedding_model = $2
+          AND embedding_version = $8
+          AND superseded_by IS NULL
           AND ($3::text IS NULL OR thread_key <> $3)
         ORDER BY embedding <=> $1::vector
         LIMIT $5
@@ -93,6 +103,7 @@ export async function findCandidates(input: FindCandidatesInput): Promise<Candid
         SELECT id, row_number() OVER (ORDER BY word_similarity($4, search_text) DESC) AS rank
         FROM knowledge_entry
         WHERE $4 <% search_text
+          AND superseded_by IS NULL
           AND ($3::text IS NULL OR thread_key <> $3)
         ORDER BY word_similarity($4, search_text) DESC
         LIMIT $5
@@ -105,8 +116,8 @@ export async function findCandidates(input: FindCandidatesInput): Promise<Candid
       SELECT
         e.id, e.thread_key, e.channel_id, e.channel_name, e.permalink,
         e.kind, e.status, e.title, e.situation, e.cause, e.resolution, e.systems, e.tags,
-        e.participants, e.message_count, e.saved_by, e.embedding_model,
-        e.created_at, e.updated_at,
+        e.participants, e.message_count, e.saved_by, e.superseded_by, e.recurrence_of,
+        e.embedding_model, e.embedding_version, e.created_at, e.updated_at,
         fused.score
       FROM knowledge_entry e
       JOIN fused ON fused.id = e.id
@@ -122,6 +133,8 @@ export async function findCandidates(input: FindCandidatesInput): Promise<Candid
         PER_SEARCH_LIMIT,
         input.limit ?? 5,
         RRF_K,
+        // 같은 모델이라도 다른 텍스트를 넣어 만든 벡터는 다른 것을 가리킨다.
+        EMBEDDING_RECIPE_VERSION,
       ],
     );
 
@@ -146,7 +159,10 @@ export async function findCandidates(input: FindCandidatesInput): Promise<Candid
         participants: row.participants,
         messageCount: row.message_count,
         savedBy: row.saved_by,
+        supersededBy: row.superseded_by,
+        recurrenceOf: row.recurrence_of,
         embeddingModel: row.embedding_model,
+        embeddingVersion: row.embedding_version,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       },

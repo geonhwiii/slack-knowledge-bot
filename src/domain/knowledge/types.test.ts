@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildSearchText, type EntryDraft } from "./types";
+import { buildSearchText, buildSituationText, type EntryDraft } from "./types";
 
 function draft(overrides: Partial<EntryDraft> = {}): EntryDraft {
   return {
@@ -55,5 +55,37 @@ describe("buildSearchText", () => {
   test("에러 코드를 그대로 남긴다", () => {
     // 키워드 검색이 걸리는 유일한 자리다. 여기서 표기가 바뀌면 검색이 안 된다.
     expect(buildSearchText(draft())).toContain("ERR_PAYMENT_5031");
+  });
+});
+
+describe("buildSituationText", () => {
+  test("제목·상황·시스템만 담는다", () => {
+    expect(buildSituationText(draft())).toBe(
+      ["결제 API 타임아웃", "결제 승인 요청이 30초 후 타임아웃", "payment-api", "ERR_PAYMENT_5031"].join("\n"),
+    );
+  });
+
+  test("원인과 해결책을 넣지 않는다", () => {
+    // 이게 이 함수가 존재하는 이유 전부다. 진행 중인 스레드에는 원인도 해결책도
+    // 없는 게 정상이라, 저장된 쪽에만 그게 들어가면 비교가 어긋난다.
+    const text = buildSituationText(draft());
+
+    expect(text).not.toContain("커넥션 풀 고갈");
+    expect(text).not.toContain("풀 크기를 50으로 올림");
+  });
+
+  test("해결 여부와 무관하게 같은 모양이 나온다", () => {
+    // 질의 쪽(미해결)과 문서 쪽(해결됨)이 같은 축을 가리켜야 거리가 의미를 갖는다.
+    const resolved = buildSituationText(draft());
+    const unresolved = buildSituationText(
+      draft({ cause: null, resolution: null, status: "unresolved" }),
+    );
+
+    expect(resolved).toBe(unresolved);
+  });
+
+  test("태그는 넣지 않는다", () => {
+    // 태그는 분류용 짧은 낱말이라 의미 축을 흔들기만 한다. 트라이그램 쪽에는 남는다.
+    expect(buildSituationText(draft())).not.toContain("타임아웃\n결제\n");
   });
 });

@@ -17,6 +17,21 @@ export const reasoningModel = anthropic("claude-opus-5");
 export const EMBEDDING_MODEL_ID = "text-embedding-3-large";
 export const EMBEDDING_DIMENSIONS = 1536;
 
+/**
+ * 무엇을 임베딩하는지의 버전. 모델이 아니라 **입력 텍스트를 만드는 방식**을 가리킨다.
+ *
+ * 모델을 바꾸면 좌표계가 달라지는 게 눈에 보이지만, 같은 모델에 다른 텍스트를 넣는
+ * 변경은 티가 안 난다. 그런데도 결과는 똑같이 어긋난다 — 옛 벡터는 제목·상황·해결책을
+ * 합친 문장을, 새 벡터는 제목·상황·시스템만을 가리키게 된다.
+ *
+ * 1: title + situation + cause + resolution + systems + tags
+ * 2: title + situation + systems  (해결책이 상황 신호를 흐려서 뺐다)
+ *
+ * 올릴 때는 반드시 `bun run reembed`를 함께 안내한다. 올리기만 하면 옛 행이 조용히
+ * 벡터 검색에서 사라진다.
+ */
+export const EMBEDDING_RECIPE_VERSION = 2;
+
 export const embeddingModel = openai.textEmbeddingModel(EMBEDDING_MODEL_ID);
 
 /** 1M 토큰당 단가(USD). 비용을 추정할 때 여기 한 곳만 고치면 되도록 모아둔다. */

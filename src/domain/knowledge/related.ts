@@ -4,7 +4,7 @@ import { logUsage, reasoningModel } from "@/lib/models";
 import { embedText } from "./embed";
 import { extractDraft } from "./extract";
 import { findCandidates, type Candidate } from "./search";
-import { buildSearchText, type EntryDraft, type KnowledgeEntry, type SourceThread } from "./types";
+import { buildSituationText, type EntryDraft, type KnowledgeEntry, type SourceThread } from "./types";
 
 /**
  * "이 이슈 원래 있던 이슈야?"에 답한다.
@@ -40,6 +40,23 @@ export interface RelatedKnowledgeResult {
 }
 
 const MAX_ADJACENT = 2;
+
+/**
+ * 트라이그램 검색에 넘길 질의를 만든다. 짧아야 한다.
+ *
+ * `word_similarity(a, b)`는 a의 트라이그램 집합과 b의 **연속된 구간** 사이의 최대
+ * 유사도다. a에 상황 문장을 통째로 넣으면 b에서도 그만큼 긴 구간이 통으로 비슷해야
+ * 걸리는데, 그러면 정작 이 검색을 붙인 이유인 `ERR_PAYMENT_5031`이 문장 안에서
+ * 묻힌다. 벡터가 못 잡는 걸 잡으라고 둔 팔이 벡터와 같은 것을 보게 되는 셈이다.
+ *
+ * 그래서 고유명사만 남긴다. 의미가 비슷한지는 벡터 쪽이 이미 보고 있다.
+ */
+export function buildKeywordQuery(draft: EntryDraft): string {
+  const nouns = [...draft.systems, ...draft.tags].filter(Boolean);
+
+  // 시스템도 태그도 안 잡힌 스레드가 있다. 그때는 제목이 그나마 제일 짧고 구체적이다.
+  return nouns.length > 0 ? nouns.join(" ") : draft.title;
+}
 
 /** 판정 모델이 고른 후보 하나. 번호는 1부터 센다 — 프롬프트에 그렇게 붙여서 보낸다. */
 export interface Selection {
@@ -146,8 +163,9 @@ export async function findRelatedKnowledge(
   // 지금 스레드도 저장할 때와 똑같이 추출한다. 상황 대 상황을 비교해야 맞는 비교다.
   const draft = await extractDraft(thread, { model: options.model });
 
-  const embedding = await embedText(buildSearchText(draft));
-  const keywordQuery = [draft.situation, ...draft.systems].join(" ");
+  // 저장할 때와 똑같은 레시피로 만들어야 거리 비교가 성립한다.
+  const embedding = await embedText(buildSituationText(draft));
+  const keywordQuery = buildKeywordQuery(draft);
 
   const candidates = await findCandidates({
     keywordQuery,
