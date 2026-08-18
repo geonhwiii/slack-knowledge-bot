@@ -119,16 +119,29 @@ Install to Workspace를 누른 뒤 두 값을 `.env.local`에 넣는다.
 - `SLACK_BOT_TOKEN` — OAuth & Permissions의 Bot User OAuth Token (`xoxb-`로 시작)
 - `SLACK_SIGNING_SECRET` — Basic Information의 Signing Secret
 
-### 6. 서버
+### 6. 봇 이름
+
+이름이 들어가는 자리가 셋인데 규칙이 다르다. 매니페스트의 `bot_user.display_name`은 이름처럼 보이지만 실제로는 핸들 슬러그라서 소문자 ASCII만 받는다. 한글을 넣으면 매니페스트가 거부한다.
+
+| 자리 | 무엇 | 한글 |
+|---|---|---|
+| `display_information.name` | 앱 이름. 설치 화면과 앱 목록에 나온다 | 가능 (35자) |
+| `bot_user.display_name` (매니페스트) | 핸들 슬러그 | `a-z` `0-9` `-` `_` `.` 만 |
+| App Home → Your App's Presence | 스레드에 보이는 이름 | 가능 |
+
+한글 이름을 쓰려면 매니페스트가 아니라 **App Home → Your App's Presence → Edit**의 Display Name에 넣는다. 같은 화면의 Default username은 핸들이라 ASCII로 둔다.
+
+`.env.local`의 `BOT_USERNAME`에는 **핸들**을 넣는다. 표시 이름이 아니다. Chat SDK가 메시지 텍스트에서 `@이름`을 찾을 때 쓰는 값이라, 표시 이름을 넣으면 멘션을 못 알아본다. 정확한 값은 다음 단계에서 확인한다.
+
+### 7. 서버
 
 ```bash
 bun run dev
-curl -o /dev/null -w "%{http_code}\n" http://localhost:3000/api/webhooks/slack
 ```
 
-401이 나오면 정상이다. 서명 없는 요청을 거부하고 있다는 뜻이다. 500이면 시크릿이 로드되지 않은 것이니 서버를 재시작한다.
+`.env.local`을 고쳤다면 서버를 다시 시작한다. 봇 인스턴스는 첫 요청 때 한 번 만들어지고 그대로 남아서, 환경변수만 바꾸면 반영되지 않는다.
 
-### 7. 터널
+### 8. 터널
 
 슬랙은 인터넷에서 우리 서버에 접속해야 하는데 `localhost`는 외부에서 닿지 않는다. 개발 중에는 터널로 임시 주소를 만든다.
 
@@ -139,7 +152,28 @@ cloudflared tunnel --url http://localhost:3000
 
 출력되는 `https://....trycloudflare.com` 주소를 쓴다. 재시작하면 주소가 바뀐다.
 
-### 8. 이벤트 구독
+quick tunnel은 오래 두면 조용히 죽는다. 프로세스는 살아 있고 로그에 재시도만 찍히는데 주소는 이미 응답하지 않는 상태가 된다. 겉으로는 멀쩡해 보여서 슬랙 쪽 문제로 착각하기 쉽다.
+
+### 9. 점검
+
+URL을 등록하기 전에 확인한다. 슬랙은 Verify가 실패하면 "응답이 없다"고만 말하고, 서버가 꺼졌는지 터널이 죽었는지 시크릿이 틀렸는지 구분해주지 않는다.
+
+```bash
+bun run check-slack https://<터널주소>/api/webhooks/slack
+```
+
+```
+✓ 토큰 유효 — 워크스페이스 'dan', 봇 @danbot
+✓ BOT_USERNAME이 봇 핸들과 일치합니다 (danbot)
+✓ SLACK_SIGNING_SECRET 있음
+✓ 서명 검증 통과 — Event Subscriptions의 Verify가 성공합니다
+```
+
+마지막 줄은 슬랙이 보내는 것과 같은 방식으로 서명한 검증 요청을 실제로 보내본 결과다. 여기가 통과하면 Verify도 통과한다.
+
+`BOT_USERNAME`이 다르다고 나오면 출력에 찍힌 핸들로 고치고 서버를 다시 시작한다.
+
+### 10. 이벤트 구독
 
 앱 설정의 Event Subscriptions를 켜고 Request URL에 `https://<터널주소>/api/webhooks/slack`을 넣는다. Verified가 뜨면 Subscribe to bot events에 두 개를 추가한다.
 
@@ -150,7 +184,7 @@ cloudflared tunnel --url http://localhost:3000
 
 저장 후 재설치 배너가 뜨면 Reinstall을 누른다.
 
-### 9. 테스트
+### 11. 테스트
 
 ```
 /invite @지식봇
@@ -159,6 +193,22 @@ cloudflared tunnel --url http://localhost:3000
 스레드에 대화를 몇 줄 남기고 요약과 저장을 시켜본다. 다른 스레드에 비슷한 증상을 적고 `관련 이슈 있었어?`를 물으면 저장한 기록을 찾아온다.
 
 마지막으로 지식베이스에 없는 주제를 물어본다. "관련 기록 없어요"라고 답해야 한다. 억지로 무언가를 물어오면 [related.ts](src/domain/knowledge/related.ts)의 판정 프롬프트를 조인다.
+
+## 안 될 때
+
+증상이 비슷해서 원인을 가르기 어려운 것들만 적는다.
+
+**Verify가 "응답이 없다"고 한다.** 슬랙은 원인을 말해주지 않는다. `bun run check-slack <주소>`로 나눠서 본다. 주소에 닿지 못하면 서버나 터널 문제이고, 401이면 Signing Secret 문제다. 터널은 프로세스가 살아 있어도 연결이 끊겨 있을 수 있으니 로그를 믿지 말고 실제로 요청을 보내본다.
+
+**시크릿을 고쳤는데 계속 401이다.** 서버를 다시 시작한다. 봇 인스턴스는 첫 요청 때 만들어지고 그대로 남는다.
+
+**봇이 멘션에 반응하지 않는다.** 순서대로 확인한다. 채널에 초대했는가(`/invite`), Event Subscriptions에 `app_mention`이 있는가, `BOT_USERNAME`이 핸들과 같은가(`bun run check-slack`), 이벤트를 추가한 뒤 Reinstall을 눌렀는가.
+
+**저장은 되는데 원문 링크가 없다.** `chat:write`만으로는 permalink를 못 받는 경우가 있다. `SLACK_WORKSPACE_URL`을 채워두면 링크를 조립하는 차선으로 넘어간다.
+
+**검색이 늘 "관련 기록 없어요"라고 한다.** 지식베이스가 비어 있으면 당연하다. 저장된 게 있는데도 그렇다면 `bun run reembed --dry-run`을 본다. 임베딩 모델이나 레시피를 바꾼 뒤 재생성하지 않으면 기존 기록이 벡터 검색에서 빠져 있다.
+
+**반대로 무관한 기록을 물어온다.** 판정 프롬프트를 조인다([related.ts](src/domain/knowledge/related.ts)). 후보 검색은 언제나 무언가를 돌려주므로, 걸러내는 일은 전적으로 그 프롬프트가 한다.
 
 ## 배포
 
@@ -195,6 +245,7 @@ Hobby 플랜의 함수 최대 실행 시간은 60초다. 이 봇은 20~40초를 
 | `bun run build` | 프로덕션 빌드 |
 | `bun run migrate` | 마이그레이션 적용 |
 | `bun run check-db` | 확장·인덱스·검색 쿼리 확인 |
+| `bun run check-slack` | 토큰·핸들·서명 확인 (주소를 주면 웹훅까지) |
 | `bun run reembed` | 낡은 벡터 재생성 (`--dry-run`으로 대상만 확인) |
 | `bun run test` | 테스트 |
 | `bun run smoke` | 저장부터 검색까지 실제 API로 관통 (비용 발생) |
@@ -245,7 +296,7 @@ src/lib/                  슬랙과 만나는 층
   db.ts, models.ts
 
 migrations/    스키마
-scripts/       마이그레이션, 점검, 재임베딩, 스모크 테스트
+scripts/       마이그레이션, DB·슬랙 점검, 재임베딩, 스모크 테스트
 test/          DB 통합 테스트와 공용 도구 (단위 테스트는 소스 옆에 있다)
 ```
 

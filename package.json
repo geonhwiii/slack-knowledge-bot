@@ -10,6 +10,7 @@
     "start": "next start",
     "migrate": "bun scripts/migrate.ts",
     "check-db": "bun scripts/check-db.ts",
+    "check-slack": "bun scripts/check-slack.ts",
     "reembed": "bun scripts/reembed.ts",
     "smoke": "bun scripts/smoke.ts",
     "test": "bun test",
