@@ -32,7 +32,7 @@ export const EMBEDDING_DIMENSIONS = 1536;
  */
 export const EMBEDDING_RECIPE_VERSION = 2;
 
-export const embeddingModel = openai.textEmbeddingModel(EMBEDDING_MODEL_ID);
+export const embeddingModel = openai.embeddingModel(EMBEDDING_MODEL_ID);
 
 /** 1M 토큰당 단가(USD). 비용을 추정할 때 여기 한 곳만 고치면 되도록 모아둔다. */
 export const PRICING = {
